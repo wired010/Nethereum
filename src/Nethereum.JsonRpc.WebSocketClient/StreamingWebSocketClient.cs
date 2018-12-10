@@ -15,7 +15,7 @@ namespace Nethereum.JsonRpc.WebSocketClient
 {
     public class StreamingWebSocketClient : StreamingClientBase, IDisposable
     {
-        private SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
         private readonly ConcurrentDictionary<string, TaskCompletionSource<RpcResponseMessage>> outstandingRequests;
 
         protected readonly string Path;

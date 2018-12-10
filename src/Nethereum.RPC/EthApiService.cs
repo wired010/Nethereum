@@ -11,21 +11,21 @@ namespace Nethereum.RPC
     {
         private BlockParameter defaultBlock;
         private ITransactionManager _transactionManager;
-        private Lazy<EthSubscriptionService> _subscriptionService;
+        private Lazy<IEthSubscriptionService> _subscriptionService;
 
         public EthApiService(IClient client) : this(client, 
             new TransactionManager(client))
         {
             if (client is IStreamingClient)
             {
-                _subscriptionService = new Lazy<EthSubscriptionService>(() =>
+                _subscriptionService = new Lazy<IEthSubscriptionService>(() =>
                 {
                     return new EthSubscriptionService(client as IStreamingClient);
                 });
             }
             else
             {
-                _subscriptionService = new Lazy<EthSubscriptionService>(() =>
+                _subscriptionService = new Lazy<IEthSubscriptionService>(() =>
                 {
                     throw new InvalidOperationException("Subscriptions require a streaming capable client to be configured");
                 });
@@ -91,6 +91,8 @@ namespace Nethereum.RPC
         public IEthApiBlockService Blocks { get; private set; }
 
         public IEthApiFilterService Filters { get; private set; }
+
+        public IEthSubscriptionService Subscriptions { get { return _subscriptionService.Value; } }
 
         public IEthApiCompilerService Compile { get; private set; }
 #if !DOTNET35

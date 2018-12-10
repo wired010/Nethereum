@@ -6,7 +6,7 @@ using Nethereum.RPC.Eth.Subscriptions;
 
 namespace Nethereum.RPC.Eth.Services
 {
-    public class EthSubscriptionService : RpcClientWrapper
+    public class EthSubscriptionService : RpcClientWrapper, IEthSubscriptionService
     {
         public EthSubscriptionService(IStreamingClient client) : base(client)
         {
