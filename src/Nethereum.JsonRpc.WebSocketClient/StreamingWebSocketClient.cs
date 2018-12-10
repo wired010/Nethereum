@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Text;
@@ -14,7 +15,8 @@ namespace Nethereum.JsonRpc.WebSocketClient
 {
     public class StreamingWebSocketClient : StreamingClientBase, IDisposable
     {
-        private readonly SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
+        private SemaphoreSlim semaphoreSlim = new SemaphoreSlim(1, 1);
+        private readonly ConcurrentDictionary<string, TaskCompletionSource<RpcResponseMessage>> outstandingRequests;
 
         protected readonly string Path;
         public static int ForceCompleteReadTotalMilliseconds { get; set; } = 10000;
@@ -32,6 +34,8 @@ namespace Nethereum.JsonRpc.WebSocketClient
             Path = path;
             JsonSerializerSettings = jsonSerializerSettings;
             cancellationTokenSource = new CancellationTokenSource();
+
+            outstandingRequests = new ConcurrentDictionary<string, TaskCompletionSource<RpcResponseMessage>>();
         }
 
         public JsonSerializerSettings JsonSerializerSettings { get; set; }
@@ -90,7 +94,7 @@ namespace Nethereum.JsonRpc.WebSocketClient
         private async Task HandleIncomingMessagesAsync(ClientWebSocket client, CancellationToken cancellationToken)
         {
             var lastChunk = string.Empty;
-            var readBufferSize = 512;
+            var readBufferSize = 1024;
 
             var bytesRead = 0;
             var chunkedBuffer = new byte[readBufferSize];
@@ -125,19 +129,14 @@ namespace Nethereum.JsonRpc.WebSocketClient
                             // assume regular rpc response
                             var result = JsonConvert.DeserializeObject<RpcResponseMessage>(localChunk, JsonSerializerSettings);
 
-                            if (result.HasError)
+                            TaskCompletionSource<RpcResponseMessage> tsc;
+                            if (outstandingRequests.TryRemove(result.Id.ToString(), out tsc))
                             {
-                                var error = new Client.RpcError(result.Error.Code, result.Error.Message, result.Error.Data);
-                                var rpcErrorEventArgs = new RpcResponseErrorMessageEventArgs(error);
-                                OnError(this, rpcErrorEventArgs);
-
+                                tsc.SetResult(result);
                                 continue;
                             }
 
-                            var rpcEventArgs = new RpcResponseMessageEventArgs(result);
-                            OnMessageRecieved(this, rpcEventArgs);
-
-                            continue;
+                            _log?.WarnFormat("Unable to match response ID {0} with awaiter", result.Id);
                         }
 
                         lastChunk = string.Empty;
@@ -154,8 +153,18 @@ namespace Nethereum.JsonRpc.WebSocketClient
             }
         }
 
-        protected override async Task SendAsync(RpcRequestMessage request, string route = null)
+        protected override async Task<RpcResponseMessage> SendAsync(RpcRequestMessage request, string route = null)
         {
+            if (request.Id == null)
+            {
+                throw new ArgumentNullException(nameof(request.Id), "Request Id is required to be non-null and unique");
+            }
+
+            if (outstandingRequests.ContainsKey(request.Id.ToString()))
+            {
+                throw new ArgumentException(nameof(request.Id), "Request Id is required to be non-null and unique");
+            }
+
             var logger = new RpcLogger(_log);
             try
             {
@@ -170,17 +179,23 @@ namespace Nethereum.JsonRpc.WebSocketClient
                 await webSocket.SendAsync(requestBytes, WebSocketMessageType.Text, true, cancellationTokenSource.Token)
                     .ConfigureAwait(false);
 
-                if (listener != null)
+                var tsc = new TaskCompletionSource<RpcResponseMessage>();
+                if (!outstandingRequests.TryAdd(request.Id.ToString(), tsc))
                 {
-                    cancellationTokenSource.Cancel();
-                    cancellationTokenSource.Dispose();
-                    cancellationTokenSource = new CancellationTokenSource();
+                    throw new InvalidOperationException("Unable to track outstanding request");
                 }
 
-                listener = Task.Factory.StartNew(async () =>
+                // only want a single listener, ClientWebSocket supports a single
+                // parallel read/write pair
+                if (listener == null)
                 {
-                    await HandleIncomingMessagesAsync(_clientWebSocket, CancellationToken.None);
-                }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Current);
+                    listener = Task.Factory.StartNew(async () =>
+                    {
+                        await HandleIncomingMessagesAsync(_clientWebSocket, CancellationToken.None);
+                    }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Current);
+                }
+
+                return await tsc.Task;
             }
             catch (Exception ex)
             {

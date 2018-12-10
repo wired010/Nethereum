@@ -16,6 +16,21 @@ namespace Nethereum.RPC
         public EthApiService(IClient client) : this(client, 
             new TransactionManager(client))
         {
+            if (client is IStreamingClient)
+            {
+                _subscriptionService = new Lazy<EthSubscriptionService>(() =>
+                {
+                    return new EthSubscriptionService(client as IStreamingClient);
+                });
+            }
+            else
+            {
+                _subscriptionService = new Lazy<EthSubscriptionService>(() =>
+                {
+                    throw new InvalidOperationException("Subscriptions require a streaming capable client to be configured");
+                });
+            }
+
         }
 
         public EthApiService(IClient client, ITransactionManager transactionManager) : base(client)

@@ -3,7 +3,7 @@ using System.Threading.Tasks;
 
 namespace Nethereum.JsonRpc.Client
 {
-    public interface IStreamingClient : IBaseClient
+    public interface IStreamingClient : IClient
     {
         event EventHandler<RpcStreamingResponseMessageEventArgs> StreamingMessageReceived;
 
